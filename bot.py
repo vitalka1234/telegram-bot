@@ -1,9 +1,11 @@
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
+from datetime import date
 import asyncio
 import os
 import random
+import json
 
 
 # =========================
@@ -17,17 +19,65 @@ if not TOKEN:
     raise ValueError("TOKEN не найден. Проверь файл .env")
 
 
-USERS = ["Молодой", "Славик", "Саня", "Алик"]
+USERS = ["Молодой", "Славик", "Саня"]
 
-WHO_PHRASES = [
-    "проиграет катку",
-    "красавчик дня",
-    "самый ленивый",
-    "король доты",
-    "лоханётся",
-    "тащит игру",
-    "идёт в зал (но не факт)",
+ROLES_FILE = "roles.json"
+
+
+WHO_ROLES = [
+    "👑 король дня",
+    "😎 MVP",
+    "🔥 главный тащер",
+    "🤡 клоун дня",
+    "💀 руинер",
+    "🛌 AFK-мастер",
+    "🎯 снайпер",
+    "📉 минус ммр",
+    "🧠 стратег, но только в голове",
+    "🐒 играет как чувствует",
+    "🧊 холодная голова",
+    "🚀 надежда команды",
+    "🧱 стена команды",
+    "🕳 пропасть без вести",
+    "🎮 легенда лобби",
 ]
+
+WHO_EVENTS = [
+    "проиграет первую катку",
+    "затащит в соло",
+    "скажет 'я только одну' и останется до ночи",
+    "уйдёт в тильт после первой смерти",
+    "будет ныть про тиммейтов",
+    "сломает мораль всей команде",
+    "включит режим бота",
+    "будет играть на рандомном герое",
+    "пойдёт не туда и не вернётся",
+    "пропадёт на 30 минут без объяснений",
+    "будет спорить, но окажется неправ",
+    "случайно сделает лучший мув дня",
+    "забудет, зачем зашёл в игру",
+    "будет говорить 'я не потею', но будет потеть",
+    "будет обвинять интернет",
+    "выдаст фразу дня",
+    "сделает вид, что всё под контролем",
+    "начнёт катку уверенно, закончит философией",
+    "будет играть так, будто завтра турнир",
+    "получит минус мораль, но продолжит",
+    "сделает странный билд и будет его защищать",
+    "будет просить сейв, когда уже поздно",
+    "внезапно станет полезным",
+    "будет молчать, а потом резко начнёт командовать",
+    "скажет 'последняя' минимум три раза",
+]
+
+RARE_WHO_EVENTS = [
+    "💀 Сегодня никто не играет. Вселенная против.",
+    "🎮 Сегодня все играют. Отмазки не принимаются.",
+    "🤡 Сегодня день цирка. Каждый сам за себя.",
+    "🧘 Сегодня лучше не играть. Мораль дороже ммр.",
+    "🔥 Сегодня день побед. Но это не точно.",
+]
+
 
 RESPONSES = {
     "dota": {
@@ -90,6 +140,54 @@ def get_luck_comment(percent: int) -> str:
     return "сегодня ты в ударе 🔥"
 
 
+def load_roles() -> dict:
+    try:
+        with open(ROLES_FILE, "r", encoding="utf-8") as file:
+            return json.load(file)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_roles(data: dict) -> None:
+    with open(ROLES_FILE, "w", encoding="utf-8") as file:
+        json.dump(data, file, ensure_ascii=False, indent=2)
+
+
+def generate_daily_roles() -> str:
+    # редкое событие дня
+    if random.randint(1, 100) <= 5:
+        return random.choice(RARE_WHO_EVENTS)
+
+    players = USERS.copy()
+    roles = WHO_ROLES.copy()
+
+    random.shuffle(players)
+    random.shuffle(roles)
+
+    lines = ["🎯 Роли на сегодня:\n"]
+
+    for index, player in enumerate(players):
+        role = roles[index % len(roles)]
+        event = random.choice(WHO_EVENTS)
+
+        # 30% шанс на второе событие
+        if random.randint(1, 100) <= 30:
+            second_event = random.choice(WHO_EVENTS)
+
+            while second_event == event:
+                second_event = random.choice(WHO_EVENTS)
+
+            line = f"{player} — {role}\n   ↳ {event}\n   ↳ {second_event}"
+        else:
+            line = f"{player} — {role}\n   ↳ {event}"
+
+        lines.append(line)
+
+    return "\n\n".join(lines)
+
+
 # =========================
 # Команды
 # =========================
@@ -100,7 +198,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Что умею:\n"
         "/start — запуск\n"
         "/help — список команд\n"
-        "/who — случайный прикол дня\n"
+        "/who — роли дня\n"
         "/play — подкинуть монетку: играем или нет\n"
         "/rate <что-то> — оценить что угодно\n"
         "/luck — уровень удачи сегодня",
@@ -113,7 +211,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "📌 Команды:\n"
         "/start — запуск\n"
         "/help — помощь\n"
-        "/who — кто сегодня кто\n"
+        "/who — роли дня\n"
         "/play — монетка: играем или не играем\n"
         "/rate <что-то> — оценка чего угодно\n"
         "/luck — твоя удача сегодня",
@@ -122,11 +220,25 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def who(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    person = random.choice(USERS)
-    phrase = random.choice(WHO_PHRASES)
+    today = str(date.today())
+    data = load_roles()
+
+    if data.get("date") == today and data.get("text"):
+        await update.message.reply_text(
+            data["text"],
+            do_quote=False,
+        )
+        return
+
+    text = generate_daily_roles()
+
+    save_roles({
+        "date": today,
+        "text": text,
+    })
 
     await update.message.reply_text(
-        f"🎯 Сегодня {phrase}: {person}",
+        text,
         do_quote=False,
     )
 
